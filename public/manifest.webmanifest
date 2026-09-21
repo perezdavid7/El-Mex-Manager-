@@ -1,0 +1,13 @@
+{
+  "name": "ElMex Ops",
+  "short_name": "ElMex Ops",
+  "description": "Inventory, ordering, shopping, and supplier management for El Mexican.",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f5f7fb",
+  "theme_color": "#0f6b34",
+  "icons": [
+    {"src":"./icon-192.png","sizes":"192x192","type":"image/png"},
+    {"src":"./icon-512.png","sizes":"512x512","type":"image/png"}
+  ]
+}
