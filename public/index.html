@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>ElMex Ops v1.9.23</title>
+<title>ElMex Ops v1.9.24</title>
 <meta name="description" content="ElMex Ops — inventory, ordering, shopping, and supplier management for El Mexican.">
 <meta name="theme-color" content="#0f6b34">
 <meta name="mobile-web-app-capable" content="yes">
@@ -62,11 +62,12 @@
 // v1.9.21: Supplier-only Ordered Already buttons stay visible on collapsed supplier cards; removed all-suppliers action
 // v1.9.22: Compact supplier order buttons; configurable visibility for suppliers that accept orders
 // v1.9.23: Separate Already Ordered tab, store-aware buttons, per-supplier Receive All
+// v1.9.24: Fresh inventory resets completed orders; only explicit Carry Over survives
 
 const APP_NAME='ElMex Ops';
 const APP_SHORT_NAME='ElMex Ops';
 const APP_TAGLINE='Inventory • Orders • Shopping';
-const APP_VERSION='v1.9.23';
+const APP_VERSION='v1.9.24';
 const APP_ICON='./header-icon-64.png';
 const APP_FULL_LOGO='./elmex-ops-splash.png';
 
@@ -91,7 +92,7 @@ function fmt(n){n=Number(n||0);if(Number.isInteger(n))return String(n);return St
 function nowLabel(ts){return ts?new Date(ts).toLocaleTimeString([], {hour:'numeric',minute:'2-digit',second:'2-digit'}):'Not saved'}
 function defaultData(){const d=JSON.parse(JSON.stringify(EMBEDDED_BACKUP));d.version='1.8.8';d.savedAt=new Date().toISOString();d.state=d.state||{};d.state.screen='home';d.state.lastSaved=0;d.state.saveOk=true;return d}
 function load(){let d=null;try{d=JSON.parse(localStorage.getItem(K.data)||'null')}catch(e){}try{const safe=JSON.parse(localStorage.getItem(K.safety)||'null');if(d&&Array.isArray(d.items)&&d.items.length===0&&safe&&Array.isArray(safe.items)&&safe.items.length>0)d=safe}catch(e){}if(!d){try{const li=JSON.parse(localStorage.getItem(K.legacyItems)||'null');if(li){d={items:li,suppliers:JSON.parse(localStorage.getItem(K.legacySuppliers)||'null')||STARTER_SUPPLIERS,supplierProfiles:JSON.parse(localStorage.getItem(K.legacyProfiles)||'null')||{},meta:JSON.parse(localStorage.getItem(K.legacyMeta)||'null')||defaultData().meta,state:JSON.parse(localStorage.getItem(K.legacyState)||'null')||defaultData().state,hist:JSON.parse(localStorage.getItem(K.legacyHistory)||'null')||[]}}}catch(e){}}if(!d)d=defaultData();({items,suppliers,supplierProfiles,meta,state,hist}=d);ensure();APP_DATA_LOADED=true;return d}
-function snapshot(){return {version:'1.9.23',savedAt:new Date().toISOString(),items,suppliers,supplierProfiles,meta,state,hist}}
+function snapshot(){return {version:'1.9.24',savedAt:new Date().toISOString(),items,suppliers,supplierProfiles,meta,state,hist}}
 function save(reason='Autosave'){if(!APP_DATA_LOADED)return false;try{state.lastSaved=Date.now();state.saveOk=true;state.saveError='';state.lastSaveReason=reason;const snap=snapshot(),data=JSON.stringify(snap),previous=localStorage.getItem(K.data);if(previous){try{const prevObj=JSON.parse(previous);if(prevObj&&Array.isArray(prevObj.items)&&prevObj.items.length>0)localStorage.setItem(K.recovery,previous)}catch(e){}}localStorage.setItem(K.data,data);if(Array.isArray(items)&&items.length>0)localStorage.setItem(K.safety,data);dbWrite(snap).then(ok=>{state.dbWarning=!ok;state.dbWarningText=ok?'':('Secondary database backup unavailable: '+(lastDbSaveError||'write failed'));renderHeaderOnly()});return true}catch(e){state.saveOk=false;state.saveError=e.message;renderHeaderOnly();return false}}
 function manualSave(){const ok=save('Manual save');alert(ok?'Saved successfully at '+nowLabel(state.lastSaved):'Save failed: '+(state.saveError||'Unknown error'));render()}
 function recover(){try{const d=JSON.parse(localStorage.getItem(K.recovery)||'null');if(!d)return alert('No recovery snapshot is available.');if(!confirm('Restore the previous recovery snapshot? Current unsaved changes may be replaced.'))return;({items,suppliers,supplierProfiles,meta,state,hist}=d);ensure();save('Recovery restored');render();alert('Recovery snapshot restored.')}catch(e){alert('Recovery failed: '+e.message)}}
@@ -107,11 +108,30 @@ function saveBadgeClass(){return state.saveOk===false?'bad':(state.dbWarning?'wa
 function shell(t,sub,body,bottom=''){document.title=(t?t+' • ':'')+APP_NAME;app.innerHTML=`<header><div class="headrow"><div><div class="brandMini"><div class="brandMiniIcon"><img src="${APP_ICON}" alt="${APP_NAME} icon"><div class="brandStars">★★★★★</div></div><div class="brandMiniText"><div class="brandMiniName"><span class="el">EL</span><span class="mex">MEX</span> <span class="ops">OPS</span></div><div class="brandMiniTag">${APP_TAGLINE}</div></div></div><h1>${esc(t)}</h1>${sub?`<div class="sub">${sub}</div>`:''}</div><div class="saveBadge ${saveBadgeClass()}">${saveBadgeText()}</div></div></header><main>${body}</main>${bottom?`<div class="bottom">${bottom}</div>`:''}`}
 function renderHeaderOnly(){const el=document.querySelector('.saveBadge');if(el){el.className='saveBadge '+saveBadgeClass();el.textContent=saveBadgeText()}}
 function render(){try{ensure();const fn={inventory:renderInventory,orders:renderOrders,quickorder:renderQuickOrder,shoppinglayout:renderShoppingLayout,cloud:renderCloud,settings:renderSettings,sections:renderSections,suppliers:renderSuppliers,orderbuttons:renderSupplierOrderSettings,items:renderItems,layout:renderLayout,history:renderHistory,savecenter:renderSaveCenter}[state.screen]||renderHome;fn()}catch(e){app.innerHTML=`<main><div class="card"><h2>App error</h2><p>${esc(e.message)}</p><button onclick="recover()">Restore Recovery</button> <button onclick="resetApp()">Reset App</button></div></main>`}}
-function hasActiveInventory(){return items.some(x=>x.touched||x.sectionDone||x.caseOnHand>0||x.unitOnHand>0||x.caseOrder>0||x.unitOrder>0)}
+function hasActiveInventory(){return items.some(x=>x.touched||x.sectionDone||x.caseOnHand>0||x.unitOnHand>0||x.caseOrder>0||x.unitOrder>0)||(state.miscItems||[]).some(x=>!x.purchased)}
 function hasInventoryProgress(){return items.some(x=>x.touched||x.sectionDone||x.caseOnHand>0||x.unitOnHand>0)}
-function inventorySnapshot(source='manual'){const snapItems=items.map(x=>({id:x.id,name:x.name,area:x.area,section:x.section,supplier:x.supplier,inventoryUnit:x.inventoryUnit||x.unit||'Each',orderUnit:x.orderUnit||x.unit||'Each',caseOnHand:Number(x.caseOnHand||0),unitOnHand:Number(x.unitOnHand||0),caseOrder:Number(x.caseOrder||0),unitOrder:Number(x.unitOrder||0),purchased:!!x.purchased,orderStatus:x.orderStatus||'open',orderedAt:x.orderedAt||null,carryOverSince:x.carryOverSince||null,touched:!!x.touched,countTouched:!!x.countTouched,sectionDone:!!x.sectionDone}));return {type:'inventory',source,date:new Date().toISOString(),startedAt:state.currentInventoryStartedAt||null,items:snapItems,orderCount:snapItems.filter(x=>x.caseOrder>0||x.unitOrder>0).length,countedCount:snapItems.filter(x=>x.countTouched).length}}
+function inventorySnapshot(source='manual'){const snapItems=items.map(x=>({id:x.id,name:x.name,area:x.area,section:x.section,supplier:x.supplier,inventoryUnit:x.inventoryUnit||x.unit||'Each',orderUnit:x.orderUnit||x.unit||'Each',caseOnHand:Number(x.caseOnHand||0),unitOnHand:Number(x.unitOnHand||0),caseOrder:Number(x.caseOrder||0),unitOrder:Number(x.unitOrder||0),purchased:!!x.purchased,orderStatus:x.orderStatus||'open',orderedAt:x.orderedAt||null,carryOverSince:x.carryOverSince||null,touched:!!x.touched,countTouched:!!x.countTouched,sectionDone:!!x.sectionDone}));const miscItems=(state.miscItems||[]).map(x=>({...x}));return {type:'inventory',source,date:new Date().toISOString(),startedAt:state.currentInventoryStartedAt||null,items:snapItems,miscItems,orderCount:snapItems.filter(x=>x.caseOrder>0||x.unitOrder>0).length+miscItems.filter(x=>!x.purchased).length,countedCount:snapItems.filter(x=>x.countTouched).length}}
 function archiveCurrentInventory(source='manual',quiet=false){if(!hasActiveInventory()){if(!quiet)alert('There is no inventory activity to save yet.');return false}const snap=inventorySnapshot(source);const sameSession=snap.startedAt?hist.findIndex(h=>h&&h.startedAt===snap.startedAt):-1;if(sameSession>=0)hist[sameSession]=snap;else hist.unshift(snap);hist=hist.slice(0,60);save('Inventory archived');if(!quiet)alert('Current inventory saved to History.');return true}
-function startNewInventory(){const active=hasActiveInventory();const msg=active?'Start a new inventory?\n\nYour current inventory and order quantities will be saved to History automatically before the new count is cleared.':'Start a new inventory?';if(!confirm(msg))return;if(active)archiveCurrentInventory('new-inventory',true);items.forEach(x=>{const keep=(x.orderStatus==='carryover'||x.orderStatus==='ordered')&&(x.caseOrder>0||x.unitOrder>0);x.caseOnHand=0;x.unitOnHand=0;x.shoppingSuggestedCaseOrder=null;x.shoppingSuggestedUnitOrder=null;x.shoppingKeepVisible=false;if(!keep){x.orderSupplier='';x.caseOrder=0;x.unitOrder=0;x.orderStatus='open';x.orderedAt=null;x.carryOverSince=null}x.purchased=false;x.sectionDone=false;x.touched=false;x.countTouched=false});state.sectionIndex=0;state.itemIndex=0;state.currentInventoryStartedAt=new Date().toISOString();state.screen='inventory';save('New inventory started');alert(active?'New inventory started. Previous inventory was saved to History.':'New inventory started.');render()}
+function startNewInventory(){
+  const active=hasActiveInventory();
+  const msg='Start a new inventory?\n\n'+(active?'Your current inventory and orders will be saved to History. ':'')+'All previous order quantities, including items marked Ordered Already, will be cleared. Only items explicitly marked Carry Over will remain.';
+  if(!confirm(msg))return;
+  if(active)archiveCurrentInventory('new-inventory',true);
+  items.forEach(x=>{
+    const keep=x.orderStatus==='carryover'&&(x.caseOrder>0||x.unitOrder>0);
+    x.caseOnHand=0;x.unitOnHand=0;
+    x.shoppingSuggestedCaseOrder=null;x.shoppingSuggestedUnitOrder=null;x.shoppingKeepVisible=false;
+    if(!keep){
+      x.orderSupplier='';x.caseOrder=0;x.unitOrder=0;x.orderStatus='open';x.orderedAt=null;x.carryOverSince=null;
+    }else{x.orderedAt=null}
+    x.purchased=false;x.sectionDone=false;x.touched=false;x.countTouched=false;
+  });
+  state.miscItems=(state.miscItems||[]).filter(x=>!x.purchased&&x.orderStatus==='carryover'&&Number(x.quantity)>0).map(x=>({...x,orderedAt:null,purchased:false}));
+  state.sectionIndex=0;state.itemIndex=0;state.currentInventoryStartedAt=new Date().toISOString();state.expandedSupplier='';state.showAlreadyOrdered=false;state.screen='inventory';
+  save('New inventory started with only explicitly carried-over orders');
+  alert('New inventory started. Previous orders cleared; Carry Over items kept.'+(active?' Previous inventory saved to History.':''));
+  render();
+}
 function renderHome(){const sec=currentSection(),it=currentItem(),pending=pendingOrders().length,already=shoppingItems().filter(x=>x.orderStatus==='ordered').length,active=hasInventoryProgress();const hero=`<div class="card brandSplash"><div class="brandSplashIcon"><img src="${APP_ICON}" alt="${APP_NAME}"><div class="brandStars">★★★★★</div></div><div class="brandSplashCopy"><div class="brandSplashName"><span class="el">EL</span><span class="mex">Mex</span> <span class="ops">OPS</span></div><div class="brandSplashTag">Inventory • Orders • Shopping</div><div class="brandSplashRule"></div><div class="brandSplashMotto">Built for what you do.</div></div></div>`;shell('Home',APP_TAGLINE,`${hero}`+`${active?`<button class="bigbtn primary" onclick="go('inventory')">▶️ Resume Inventory<div class="small">${esc(sec.area)} → ${esc(sec.section)} → ${esc(it?.name||'')}</div></button>`:''}<button class="bigbtn ${active?'':'primary'}" onclick="startNewInventory()">🆕 Start New Inventory<div class="small">${active?'Saves this week to History, then clears active counts':'Begin a fresh weekly count'}</div></button><button class="bigbtn" onclick="openQuickOrder()">⚡ Quick Supplier Order<div class="small">Order from one supplier without running inventory</div></button><button class="bigbtn" onclick="go('orders')">🛒 Shopping List<div class="small">${pending} to buy/order • ${already} already ordered</div></button><button class="bigbtn" onclick="go('history')">📜 Previous Inventories / Orders<div class="small">${hist.length} saved weeks</div></button><button class="bigbtn" onclick="go('cloud')">☁️ Cloud Sync<div class="small">Manager upload / employee shared master inventory</div></button><button class="bigbtn" onclick="go('settings')">⚙️ Settings</button><button class="bigbtn" onclick="go('savecenter')">💾 Save & Recovery<div class="small">Last saved ${nowLabel(state.lastSaved)}</div></button>`) }
 function countWasEntered(x){return !!(x&&x.countTouched)}
 function qtyDisplay(x,p){if((p==='caseOnHand'||p==='unitOnHand')&&!countWasEntered(x))return '&nbsp;';return fmt(x[p])}
@@ -201,16 +221,16 @@ function renderAlreadyOrderedTab(ordered){
   const open=!!state.showAlreadyOrdered,groupCount=new Set(ordered.map(effectiveSupplier)).size;
   let out=`<div class="card supplierCard alreadyOrderedTab"><button class="supplierTab" onclick="toggleAlreadyOrderedTab()"><span><b>✓ Already Ordered (${ordered.length})</b><small>${groupCount} supplier${groupCount===1?'':'s'} • separate from the active shopping list</small></span><span class="supplierArrow">${open?'▲':'▼'}</span></button>`;
   if(open){
-    out+=`<div class="supplierBody"><div class="alreadyOrderedHint">These items are off the shopping list. You can leave them here, undo an order, carry an item over, or mark received whenever appropriate.</div>`;
+    out+=`<div class="supplierBody"><div class="alreadyOrderedHint">These orders are done for this inventory. They clear automatically when you start the next inventory. You can undo an order, explicitly carry it over, or clear it from this list now.</div>`;
     if(!ordered.length)out+='<div class="hint">No orders have been marked ordered already.</div>';
     for(const s of suppliers.filter(s=>ordered.some(x=>effectiveSupplier(x)===s))){
       const so=shoppingSorted(ordered.filter(x=>effectiveSupplier(x)===s),s);
-      out+=`<div class="alreadyOrderedGroup"><div class="alreadyOrderedGroupTitle"><b>${esc(s)} (${so.length})</b><button class="mini primary" onclick="receiveSupplierOrdered(${js(s)})">✓ Received All (${so.length})</button></div><div class="row supplierActions"><button class="mini" onclick="shareList(${js(s)},'ordered')">Share Ordered</button><button class="mini" onclick="copyList(${js(s)},'ordered')">Copy Ordered</button></div>`;
+      out+=`<div class="alreadyOrderedGroup"><div class="alreadyOrderedGroupTitle"><b>${esc(s)} (${so.length})</b><button class="mini primary" onclick="receiveSupplierOrdered(${js(s)})">✓ Clear Completed (${so.length})</button></div><div class="row supplierActions"><button class="mini" onclick="shareList(${js(s)},'ordered')">Share Ordered</button><button class="mini" onclick="copyList(${js(s)},'ordered')">Copy Ordered</button></div>`;
       for(const x of so){
         const qty=x.miscellaneous?`${fmt(x.quantity)} ${esc(x.unit)}`:`${x.caseOrder?fmt(x.caseOrder)+' '+esc(x.orderUnit):''}${x.unitOrder?'+ '+fmt(x.unitOrder)+' loose units':''}`;
         const id=x.miscellaneous?js(x.id):String(x.id);
         const recv=x.miscellaneous?`markMiscPurchased(${id})`:`markPurchased(${id})`;
-        out+=`<div class="alreadyOrderedLine"><b>${esc(x.name)}</b>${x.miscellaneous?' <span class="saveBadge warn">ONE-TIME</span>':''}<div class="meta">${qty}${x.orderedAt?` • ordered ${new Date(x.orderedAt).toLocaleDateString()}`:''}${x.note?` • ${esc(x.note)}`:''}</div><div class="row"><button class="mini" onclick="toggleOrdered(${id},${!!x.miscellaneous})">↩ Undo Ordered</button><button class="mini primary" onclick="${recv}">✓ Received</button><button class="mini" onclick="carryOverOrderedItem(${js(x.id)})">↪ Carry Over</button></div></div>`;
+        out+=`<div class="alreadyOrderedLine"><b>${esc(x.name)}</b>${x.miscellaneous?' <span class="saveBadge warn">ONE-TIME</span>':''}<div class="meta">${qty}${x.orderedAt?` • ordered ${new Date(x.orderedAt).toLocaleDateString()}`:''}${x.note?` • ${esc(x.note)}`:''}</div><div class="row"><button class="mini" onclick="toggleOrdered(${id},${!!x.miscellaneous})">↩ Undo Ordered</button><button class="mini primary" onclick="${recv}">✓ Clear</button><button class="mini" onclick="carryOverOrderedItem(${js(x.id)})">↪ Carry Over</button></div></div>`;
       }
       out+='</div>';
     }
@@ -235,14 +255,14 @@ function receiveSupplierOrdered(s){
   if(!s||!suppliers.includes(s))return alert('Choose a supplier first.');
   const ordered=shoppingItems(s).filter(x=>x.orderStatus==='ordered');
   if(!ordered.length)return alert('No ordered items for this supplier.');
-  if(!confirm('Mark all '+ordered.length+' ordered item'+(ordered.length===1?'':'s')+' from '+s+' as received?\n\nThis removes only those items from the Already Ordered list. Other suppliers will not be changed.'))return;
+  if(!confirm('Clear '+ordered.length+' completed order item'+(ordered.length===1?'':'s')+' from '+s+'?\n\nThis removes them from the Already Ordered list without changing on-hand counts. Other suppliers will not be changed.'))return;
   const miscIds=new Set(ordered.filter(x=>x.miscellaneous).map(x=>String(x.id)));
   for(const x of ordered){
     if(x.miscellaneous)continue;
     x.orderStatus='purchased';x.purchased=true;x.orderedAt=null;x.carryOverSince=null;clearShoppingAdjustment(x);
   }
   if(miscIds.size)state.miscItems=(state.miscItems||[]).filter(x=>!miscIds.has(String(x.id)));
-  const ok=save(s+': '+ordered.length+' ordered items received');
+  const ok=save(s+': '+ordered.length+' ordered completed orders cleared');
   if(!ok)alert('Save failed. Keep this screen open and use Save Now.');
   render();
 }
@@ -390,9 +410,9 @@ function endLayoutDrag(ev){const row=layoutDrag.row;if(!row)return;const parent=
 function addItemAtPosition(area,section,index){normalizeSectionOrder(area,section);state.pendingInsert={area,section,index:Number(index)};openEditItem(0,'layout',area,section)}
 function normalizeSectionOrder(area,section){items.filter(x=>x.area===area&&x.section===section).sort((a,b)=>(a.sortOrder??0)-(b.sortOrder??0)||String(a.name).localeCompare(String(b.name))).forEach((x,i)=>x.sortOrder=i)}
 function moveItemOrder(id,dir){const x=byId(id);normalizeSectionOrder(x.area,x.section);const list=items.filter(y=>y.area===x.area&&y.section===x.section).sort((a,b)=>a.sortOrder-b.sortOrder),i=list.findIndex(y=>y.id===id),j=i+dir;if(i<0||j<0||j>=list.length)return;const t=list[i].sortOrder;list[i].sortOrder=list[j].sortOrder;list[j].sortOrder=t;save('Item order changed');renderLayout()}
-function historySummary(h){const all=h.items||[];const orders=all.filter(x=>Number(x.caseOrder||0)>0||Number(x.unitOrder||0)>0).length;const counted=all.filter(historyWasCounted).length;return `${counted} counted • ${orders} ordered`}
+function historySummary(h){const all=h.items||[],misc=(h.miscItems||[]).filter(x=>!x.purchased);const orders=all.filter(x=>Number(x.caseOrder||0)>0||Number(x.unitOrder||0)>0).length+misc.length;const counted=all.filter(historyWasCounted).length;return `${counted} counted • ${orders} ordered`}
 function renderHistory(){shell('History','Previous weekly inventories and orders',`<div class="card">${hist.length?hist.map((h,i)=>`<div class="listLine"><b>${new Date(h.date).toLocaleString()}</b><div class="meta">${esc(historySummary(h))}</div><button class="mini" onclick="viewHistory(${i})">View</button></div>`).join(''):'No saved history yet. Starting a new inventory will automatically save the current week here.'}</div>`,`<button onclick="go('home')">Home</button>`)}
-function historyText(h){const all=h.items||[];let out='ELMEX INVENTORY HISTORY\n'+new Date(h.date).toLocaleString()+'\n';const groups=[...new Set(all.map(x=>(x.area||'')+'|||'+(x.section||'')))];groups.forEach(g=>{const [area,section]=g.split('|||');const rows=all.filter(x=>(x.area||'')===area&&(x.section||'')===section).filter(x=>historyWasCounted(x)||Number(x.caseOrder||0)>0||Number(x.unitOrder||0)>0);if(!rows.length)return;out+='\n'+area+' → '+section+'\n';rows.forEach(x=>{let parts=[];if(historyWasCounted(x))parts.push('on hand '+fmt(x.caseOnHand)+' '+(x.inventoryUnit||x.unit||''));if(Number(x.unitOnHand||0)>0)parts.push('loose on hand '+fmt(x.unitOnHand));if(Number(x.caseOrder||0)>0)parts.push('order '+fmt(x.caseOrder)+' '+(x.orderUnit||x.unit||''));if(Number(x.unitOrder||0)>0)parts.push('order loose '+fmt(x.unitOrder));out+='- '+x.name+(parts.length?' — '+parts.join(' | '):'')+'\n'})});return out.trim()}
+function historyText(h){const all=h.items||[];let out='ELMEX INVENTORY HISTORY\n'+new Date(h.date).toLocaleString()+'\n';const groups=[...new Set(all.map(x=>(x.area||'')+'|||'+(x.section||'')))];groups.forEach(g=>{const [area,section]=g.split('|||');const rows=all.filter(x=>(x.area||'')===area&&(x.section||'')===section).filter(x=>historyWasCounted(x)||Number(x.caseOrder||0)>0||Number(x.unitOrder||0)>0);if(!rows.length)return;out+='\n'+area+' → '+section+'\n';rows.forEach(x=>{let parts=[];if(historyWasCounted(x))parts.push('on hand '+fmt(x.caseOnHand)+' '+(x.inventoryUnit||x.unit||''));if(Number(x.unitOnHand||0)>0)parts.push('loose on hand '+fmt(x.unitOnHand));if(Number(x.caseOrder||0)>0)parts.push('order '+fmt(x.caseOrder)+' '+(x.orderUnit||x.unit||''));if(Number(x.unitOrder||0)>0)parts.push('order loose '+fmt(x.unitOrder));out+='- '+x.name+(parts.length?' — '+parts.join(' | '):'')+'\n'})});const misc=(h.miscItems||[]).filter(x=>!x.purchased);if(misc.length){out+='\nOne-time shopping items\n';misc.forEach(x=>{out+='- '+x.name+' — '+fmt(x.quantity)+' '+(x.unit||'')+' ('+(x.supplier||'Unassigned')+')'+(x.orderStatus==='ordered'?' [ORDERED]':x.orderStatus==='carryover'?' [CARRY OVER]':'')+'\n'})}return out.trim()}
 function viewHistory(i){const h=hist[i],txt=historyText(h);shell('Saved Inventory',new Date(h.date).toLocaleString(),`<div class="card"><div class="meta">${esc(historySummary(h))}</div></div><textarea id="historyText">${esc(txt)}</textarea><button onclick="copyHistory()">Copy</button>`,`<button onclick="go('history')">Back</button>`)}
 async function copyHistory(){const txt=document.getElementById('historyText').value;try{await navigator.clipboard.writeText(txt);alert('History copied.')}catch(e){prompt('Copy this history:',txt)}}
 
